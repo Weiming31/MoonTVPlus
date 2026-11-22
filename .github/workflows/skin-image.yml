@@ -84,7 +84,9 @@ jobs:
             echo "::error::登录页标题未居中（缺 auth-title--center）"
             exit 1
           fi
-          if grep -q 'auth-sub' src/app/login/page.tsx; then
+          # 注意用 className='auth-sub' 而不是裸 'auth-sub'：
+          # 按钮类名 auth-submit 也含这个子串，宽匹配会误判。
+          if grep -q "className='auth-sub'" src/app/login/page.tsx; then
             echo "::error::登录页仍残留 auth-sub 副标题"
             exit 1
           fi
