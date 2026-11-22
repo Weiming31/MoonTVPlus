@@ -1,0 +1,193 @@
+name: Build skin image
+
+# 编译带皮肤的镜像并推到 ghcr.io/weiming31/moontvplus。
+#
+# 版本号与官方一致：VERSION.txt / src/lib/version.ts 是上游原样（绝不改写），
+# 所以镜像里 CURRENT_VERSION 等于上游当前版本，容器内不会弹「有新版本」。
+# 镜像 tag 也就用官方那套 v<版本号>，一眼能对上。
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '额外标签（默认 latest）'
+        required: false
+        default: 'latest'
+        type: string
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: skin-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            os: ubuntu-latest
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Prepare platform name
+        run: echo "PLATFORM_NAME=${{ matrix.platform }}" | sed 's|/|-|g' >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- 皮肤：构建前覆盖进源码树 ----
+      # 皮肤放在 .skin/files/ 下，按 upstream 相对路径组织（11 个文件）。
+      # 这一步把外观文件盖到 src/ 与 public/，业务逻辑一行不动。
+      - name: Apply skin overlay
+        run: |
+          set -euo pipefail
+          test -d .skin/files || { echo "::error::缺少 .skin/files"; exit 1; }
+          cp -rv .skin/files/. ./
+          # 断言：页面确实是皮肤版。皮肤版用 <AuthShell> 包裹，
+          # 官方原版是裸的 <div className='relative min-h-screen flex items-center justify-center px-4'>
+          if ! grep -q 'AuthShell' src/app/login/page.tsx; then
+            echo "::error::皮肤覆盖失败：src/app/login/page.tsx 不是皮肤版（缺 AuthShell）"
+            exit 1
+          fi
+          if ! grep -q 'AuthShell' src/app/register/page.tsx; then
+            echo "::error::皮肤覆盖失败：src/app/register/page.tsx 不是皮肤版（缺 AuthShell）"
+            exit 1
+          fi
+          if ! test -f src/components/auth-skin/AuthShell.tsx; then
+            echo "::error::皮肤覆盖失败：缺 src/components/auth-skin/AuthShell.tsx"
+            exit 1
+          fi
+          n=$(ls public/icons/skin/login-bg-*.mp4 public/icons/skin/login-bg-poster-*.webp | wc -l)
+          if [ "$n" -ne 6 ]; then
+            echo "::error::背景资源不全（$n/6）"
+            exit 1
+          fi
+          echo "皮肤已覆盖：$(git status --porcelain | wc -l) 个路径发生变化"
+
+      - name: Read version
+        id: version
+        run: |
+          v=$(tr -d '[:space:]' < VERSION.txt)
+          echo "version=v$v" >> "$GITHUB_OUTPUT"
+          echo "raw=$v" >> "$GITHUB_OUTPUT"
+          # 双保险：仓库里的 version.ts 必须与 VERSION.txt 一致，否则会误报「有新版本」
+          grep -q "CURRENT_VERSION = '$v'" src/lib/version.ts \
+            || { echo "::error::version.ts 与 VERSION.txt ($v) 不一致"; exit 1; }
+          echo "版本 $v（与官方一致，不会弹更新提示）"
+
+      - name: Set lowercase owner
+        id: lc
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }},enable={{is_default_branch}}
+            type=raw,value=${{ github.event.inputs.tag || 'latest' }},enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          outputs: type=image,name=ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ env.PLATFORM_NAME }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_NAME }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          d="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${d#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_NAME }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # 把两个架构的 digest 合成一个 manifest list，
+  # 这样 docker pull 在 x86 与 arm（电视盒子/M 系列 Mac）上都能用
+  merge:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [ build ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=v$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Set lowercase owner
+        id: lc
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ steps.version.outputs.version }} \
+            -t ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ github.event.inputs.tag || 'latest' }} \
+            $(printf 'ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus@sha256:%s ' *)
+
+      - name: Summary
+        run: |
+          echo "### 镜像已发布" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ github.event.inputs.tag || 'latest' }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

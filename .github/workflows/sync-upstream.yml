@@ -1,0 +1,66 @@
+name: Sync upstream
+
+# 每天检查一次上游 mtvpls/MoonTVPlus 有没有新提交。
+# 有新提交就把上游 main 合并进本仓库 main —— 只做 git 操作，不编译、不推镜像。
+# 编译由 Docker 工作流（skin-image.yml）在 push 到 main 时触发。
+
+on:
+  schedule:
+    # UTC 19:10 = 北京时间 03:10，避开上游可能的白天发版高峰
+    - cron: '10 19 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve upstream commit
+        id: up
+        run: |
+          sha=$(git ls-remote https://github.com/mtvpls/MoonTVPlus.git refs/heads/main | cut -f1)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "上游 main = $sha"
+
+      - name: Compare with local
+        id: cmp
+        run: |
+          if git cat-file -e "${{ steps.up.outputs.sha }}" 2>/dev/null; then
+            echo "same=true" >> "$GITHUB_OUTPUT"
+            echo "已包含上游最新提交，无需同步"
+          else
+            echo "same=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream
+        if: steps.cmp.outputs.same == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name  'skin-sync-bot'
+          git config user.email 'skin-sync-bot@users.noreply.github.com'
+
+          git remote add upstream https://github.com/mtvpls/MoonTVPlus.git
+          git fetch --no-tags upstream main
+
+          # 我们的提交只新增 .skin/ 与 .github/，上游不会碰这两个路径，
+          # 理论上永远 fast-forward 或干净合并。真冲突就失败退出，人工处理。
+          if ! git merge --no-edit upstream/main; then
+            echo "::error::上游改动与皮肤分支冲突，请手动合并后再推送"
+            git merge --abort || true
+            exit 1
+          fi
+
+          echo "合并后 VERSION.txt = $(tr -d '[:space:]' < VERSION.txt)"
+          git push origin HEAD:main
