@@ -776,6 +776,12 @@
     bottom: auto;
   }
 
+  /* 手机上背景只占 68vh，底下是卡片所在实色区，
+     所以薄膜要比桌面淡一点，否则 640 宽的源片会被压成"灰糊"。 */
+  .auth-bg::before {
+    background: rgba(7, 6, 10, 0.22);
+  }
+
   .auth-bg::after {
     background: linear-gradient(
       180deg,
