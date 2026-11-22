@@ -63,4 +63,12 @@ jobs:
           fi
 
           echo "合并后 VERSION.txt = $(tr -d '[:space:]' < VERSION.txt)"
+          # 检查皮肤基线是否还成立：上游若改了登录/注册页，皮肤版是旧逻辑，
+          # 需要在本地重新套一遍皮肤（skin/apply.sh）再推上来。
+          if ! git diff --quiet "${{ steps.up.outputs.sha }}"~1 "${{ steps.up.outputs.sha }}" -- \
+               src/app/login/page.tsx src/app/register/page.tsx; then
+            echo "::warning::上游改动了登录/注册页，皮肤版可能落后于新逻辑"
+            echo "### ⚠️ 上游改了登录/注册页" >> "$GITHUB_STEP_SUMMARY"
+            echo "皮肤版 \`page.tsx\` 基于旧版逻辑，请本地重新套皮肤后推送。" >> "$GITHUB_STEP_SUMMARY"
+          fi
           git push origin HEAD:main
