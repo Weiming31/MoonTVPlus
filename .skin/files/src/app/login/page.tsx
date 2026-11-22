@@ -288,8 +288,7 @@ function LoginPageClient() {
           <span className='auth-brand-name'>{siteName}</span>
         </div>
 
-        <h1 className='auth-title'>登录</h1>
-        <p className='auth-sub'>输入访问密码即可进入。</p>
+        <h1 className='auth-title auth-title--center'>登录</h1>
 
         <form onSubmit={handleSubmit} noValidate>
           {shouldAskUsername && (

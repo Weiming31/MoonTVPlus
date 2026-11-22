@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ---- 皮肤：构建前覆盖进源码树 ----
-      # 皮肤放在 .skin/files/ 下，按 upstream 相对路径组织（11 个文件）。
+      # 皮肤放在 .skin/files/ 下，按 upstream 相对路径组织（16 个文件）。
       # 这一步把外观文件盖到 src/ 与 public/，业务逻辑一行不动。
       - name: Apply skin overlay
         run: |
@@ -71,6 +71,21 @@ jobs:
           n=$(ls public/icons/skin/login-bg-*.mp4 public/icons/skin/login-bg-poster-*.webp | wc -l)
           if [ "$n" -ne 6 ]; then
             echo "::error::背景资源不全（$n/6）"
+            exit 1
+          fi
+          # favicon 与 PWA 图标：皮肤版是登录卡片上那个渐变方块，
+          # 尺寸必须齐全，否则 iOS 主屏图标 / 安卓安装横幅会挑到旧图。
+          for s in 192 256 384 512; do
+            test -s "public/icons/icon-${s}x${s}.png" \
+              || { echo "::error::缺 public/icons/icon-${s}x${s}.png"; exit 1; }
+          done
+          test -s public/favicon.ico || { echo "::error::缺 public/favicon.ico"; exit 1; }
+          if ! grep -q 'auth-title--center' src/app/login/page.tsx; then
+            echo "::error::登录页标题未居中（缺 auth-title--center）"
+            exit 1
+          fi
+          if grep -q 'auth-sub' src/app/login/page.tsx; then
+            echo "::error::登录页仍残留 auth-sub 副标题"
             exit 1
           fi
           echo "皮肤已覆盖：$(git status --porcelain | wc -l) 个路径发生变化"

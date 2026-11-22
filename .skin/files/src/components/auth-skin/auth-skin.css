@@ -86,10 +86,24 @@
   opacity: 0;
   transition: opacity 0.9s ease;
   will-change: opacity;
+  /* 源片是 AV1 编码的暗场，暗部容易发灰；轻微拉黑位+降饱和，
+     配合上面的薄膜可以让画面"沉"下去，而不是被提亮成糊状。 */
+  filter: contrast(1.07) saturate(0.96) brightness(0.96);
 }
 
 .auth-bg video.ready {
   opacity: 1;
+}
+
+/* 统一薄膜：整屏一层极淡的墨色，先把压缩暗部的"灰雾感"压下去。
+   它和下面的 ::after 渐变分工不同 —— 这层管全局基调，::after 管局部对比度。 */
+.auth-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgba(7, 6, 10, 0.34);
 }
 
 /* 压暗遮罩：保证表单文字对比度 —— 这一步比码率更决定"高级感" */
@@ -223,6 +237,12 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--auth-ink);
+}
+
+/* 登录页标题：副标题已去掉，标题单独居中，下边距要自己撑开 */
+.auth-title--center {
+  text-align: center;
+  margin-bottom: 26px;
 }
 
 .auth-title {
