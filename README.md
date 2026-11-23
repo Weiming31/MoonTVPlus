@@ -216,6 +216,10 @@ FOO = "bar"
 
 EdgeOne Pages/Makers 支持通过 API Token 在 GitHub Actions 中自动构建并部署，本项目已内置 `.github/workflows/edgeone-deploy.yml`。
 
+> 📖 **完整版教程见 [`docs/EDGEONE-TURSO-DEPLOY.md`](docs/EDGEONE-TURSO-DEPLOY.md)**
+> —— 涵盖从零建 Turso 库、拿 Token、配 Secrets、启用 workflow、触发部署、5 层验证、
+> 皮肤是怎么上的、日常运维与 40+ 条排错对照表。下面只是最简流程。
+
 #### 前置要求
 
 1. 一个腾讯云 EdgeOne 账号
@@ -268,6 +272,19 @@ EdgeOne Pages/Makers 支持通过 API Token 在 GitHub Actions 中自动构建�
 - `project_name` 默认为 `moontvplus`
 - `area` 默认为 `overseas`，即全球可用区（不含中国大陆）；如需全球可用区可选择 `global`
 - `sync_environment` 默认开启，会在部署后同步环境变量并再次部署以确保新建项目也能读取环境变量
+
+**4. 关于皮肤**
+
+本仓库的 EdgeOne 部署会在构建前自动执行 `node scripts/skin-overlay.mjs`，把 `.skin/` 里的
+登录页/注册页/图标/背景视频覆盖进产物，并跑一遍断言（缺任何一项就让 CI 失败，不会静默部署残缺皮肤）。
+皮肤生效后，去后台「主题设置 → 自定义 CSS」粘一行即可启用主站配色：
+
+```css
+@import url("/icons/skin/theme.css");
+```
+
+想临时部署不带皮肤的原生外观：`Settings → Secrets and variables → Actions → Variables` 里加
+`SKIN_OVERLAY = 0`，然后重跑一次部署。
 
 
 ---
