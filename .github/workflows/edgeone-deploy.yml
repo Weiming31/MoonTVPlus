@@ -51,6 +51,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ---- 皮肤：构建前覆盖进源码树 ----
+      # 上游的 edgeone-deploy.yml 只跑 build:edgeone，产物是原生外观；
+      # 皮肤文件在 .skin/files/ 下按上游相对路径组织，这里盖到 src/ 与 public/。
+      # 脚本自带断言（AuthShell / auth-title--center / 6 个背景资源 / PWA 图标），
+      # 缺一件就 exit 1，不让无皮肤产物静默上线。
+      # 想临时部署原生外观：Settings → Variables 里加 SKIN_OVERLAY=0，脚本会自动跳过。
+      - name: Apply skin overlay
+        env:
+          SKIN_OVERLAY: ${{ vars.SKIN_OVERLAY }}
+        run: node scripts/skin-overlay.mjs
+
+      - name: Verify skin overlay
+        env:
+          SKIN_OVERLAY: ${{ vars.SKIN_OVERLAY }}
+        run: |
+          node scripts/skin-overlay.mjs --check
+          echo "皮肤覆盖后的改动路径："
+          git status --porcelain
+
       - name: Export build environment variables
         env:
           NEXT_PUBLIC_STORAGE_TYPE: ${{ secrets.NEXT_PUBLIC_STORAGE_TYPE }}

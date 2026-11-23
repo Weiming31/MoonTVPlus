@@ -1,7 +1,36 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * 皮肤覆盖（skin overlay）必须在 Next 构建之前完成：
+ * 皮肤版 page.tsx 会 import '@/components/auth-skin/AuthShell'，
+ * 如果先构建再覆盖，Next 只会按上游原版页面打包，产物里根本没有皮肤。
+ *
+ * 放在这里执行而不是只写在 workflow 里，是因为 EdgeOne 平台自己的构建器
+ * 会直接调用 `pnpm edgeone:build`（看见 NEXT_PRIVATE_STANDALONE=true），
+ * 不经过 GitHub Actions 的那几个 step —— 只有脚本内自带的覆盖才能两条路都覆盖到。
+ * SKIN_OVERLAY=0 可以显式关掉，退回上游原生外观。
+ */
+function applySkinOverlay() {
+  const script = join(dirname(fileURLToPath(import.meta.url)), 'skin-overlay.mjs');
+  if (!existsSync(script)) {
+    console.warn('[edgeone-build] skin-overlay.mjs 不存在，跳过皮肤覆盖');
+    return;
+  }
+  const result = spawnSync(process.execPath, [script], {
+    stdio: 'inherit',
+    env: process.env,
+  });
+  if (result.status !== 0) {
+    console.error('[edgeone-build] 皮肤覆盖失败，终止构建（避免部署无皮肤产物）');
+    process.exit(result.status ?? 1);
+  }
+}
+
+applySkinOverlay();
 
 function loadLocalEnvFile() {
   const envPath = join(process.cwd(), '.env');
